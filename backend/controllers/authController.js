@@ -128,7 +128,7 @@ const login = async (req, res) => {
   }
 };
 
-// Admin Login
+// Admin Login (DEVELOPMENT ONLY - HARDCODED BYPASS)
 const adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -137,31 +137,65 @@ const adminLogin = async (req, res) => {
       return res.status(400).json({ message: "Email and password are required" });
     }
 
-    const user = await User.findOne({ email, role: "admin" });
-    if (!user) {
+    // DEVELOPMENT ONLY: Accept hardcoded admin credentials
+    const ADMIN_EMAIL = "bismoyxyz@gmail.com";
+    const ADMIN_PASSWORD = "123456";
+
+    // Only accept the configured development admin credentials
+    if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid credentials" });
+    // Ensure an admin user exists in the database so JWT-based auth works as expected.
+    // If not present, create one (password will be hashed by the model pre-save hook).
+    let adminUser = await User.findOne({ email });
+
+    if (!adminUser) {
+      adminUser = new User({
+        email: ADMIN_EMAIL,
+        password: ADMIN_PASSWORD,
+        role: "admin",
+        isActive: true,
+        isApproved: true,
+      });
+      await adminUser.save();
+    } else {
+      // If the user exists but is not an admin, convert to admin and ensure active/approved.
+      let changed = false;
+      if (adminUser.role !== "admin") {
+        adminUser.role = "admin";
+        changed = true;
+      }
+      if (!adminUser.isActive) {
+        adminUser.isActive = true;
+        changed = true;
+      }
+      if (!adminUser.isApproved) {
+        adminUser.isApproved = true;
+        changed = true;
+      }
+
+      // If the stored password does not match the development password, overwrite it
+      // so the hardcoded admin password works in development environments.
+      const match = await adminUser.comparePassword(ADMIN_PASSWORD).catch(() => false);
+      if (!match) {
+        adminUser.password = ADMIN_PASSWORD;
+        changed = true;
+      }
+
+      if (changed) await adminUser.save();
     }
 
-    if (!user.isActive) {
-      return res.status(401).json({ message: "Account is deactivated" });
-    }
+    const token = generateToken(adminUser._id);
 
-    const token = generateToken(user._id);
+    const userData = {
+      id: adminUser._id,
+      email: adminUser.email,
+      role: adminUser.role,
+      isApproved: adminUser.isApproved,
+    };
 
-    res.json({
-      message: "Admin login successful",
-      token,
-      user: {
-        id: user._id,
-        email: user.email,
-        role: user.role,
-      },
-    });
+    return res.json({ success: true, message: "Admin login successful", token, user: userData });
   } catch (error) {
     console.error("Admin login error:", error);
     res.status(500).json({ message: "Server error", error: error.message });
